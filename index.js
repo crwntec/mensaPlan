@@ -3,8 +3,9 @@ import axios from "axios";
 import { PDFExtract } from "pdf.js-extract";
 import { MongoClient } from "mongodb";
 import { promisify } from "util";
+import { create } from "domain";
 
-const connectionString = `mongodb+srv://mensa:${process.env['db_password']}@mensa.mrn5ciq.mongodb.net/?retryWrites=true&w=majority&appName=mensa`;
+const connectionString = `mongodb+srv://mensa:${process.env["db_password"]}@mensa.mrn5ciq.mongodb.net/?retryWrites=true&w=majority&appName=mensa`;
 
 const client = new MongoClient(connectionString);
 
@@ -30,7 +31,6 @@ const options = {};
 async function processPDF() {
   try {
     await client.connect();
-    console.log("Connected to MongoDB");
 
     const buffer = await fetchAndCreateBuffer(url);
     const data = await extractBuffer(buffer, options);
@@ -51,7 +51,7 @@ async function processPDF() {
     dates.forEach((d, index) => {
       let items = currentWeek.filter((o) => o.x >= d.x && o.x <= d.x + d.width);
       items = items.filter(
-        (o, index) => o.str !== " " && o.str !== "" && o.y < 365 && index > 0
+        (o, index) => o.str !== " " && o.str !== "" && o.y < 365 && index > 0,
       );
 
       if (!items[0]) {
@@ -79,26 +79,34 @@ async function processPDF() {
     dates = dates.filter((o) => o.meals && o.meals.length > 0);
 
     const meals = client.db("Data").collection("meals");
+    let updated = 0
+    let created = 0
 
     for (const d of dates) {
       for (const m of d.meals) {
         const existingMeal = await meals.findOne({ name: m });
         if (existingMeal) {
-          await meals.updateOne({ name: m }, { $set: { lastSeen: d.date } });
-          console.log("Updated", m);
+          const difference = moment(d.date, "LLLL").diff(
+            moment(existingMeal.date, "LLLL"),
+            "days",
+          );
+          await meals.updateOne(
+            { name: m },
+            { $set: { lastSeen: difference, date: d.date } },
+          );
+          updated++;
         } else {
-          await meals.insertOne({ name: m, lastSeen: d.date });
-          console.log("Created", m);
+          await meals.insertOne({ name: m, lastSeen: 0, date: d.date });
+          created++
         }
       }
     }
 
-    console.log("Processing completed");
+    console.log("OK: " + updated + " updated, " + created + " created");
   } catch (error) {
     console.error("Error in processPDF:", error);
   } finally {
     await client.close();
-    console.log("Disconnected from MongoDB");
   }
 }
 
